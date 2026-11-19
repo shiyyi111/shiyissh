@@ -1,0 +1,60 @@
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### IntelliJ IDEA ###
+.idea/modules.xml
+.idea/jarRepositories.xml
+.idea/compiler.xml
+.idea/libraries/
+*.iws
+*.iml
+*.ipr
+
+### Eclipse ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### VS Code ###
+.vscode/
+
+### Mac OS ###
+.DS_Store
+/data/
+/.idea/
+data/
+target/
+
+# SSH 本地配置（含明文密码，禁止提交）
+**/ssh-config.local
+/shyissh-server-app/src/test/resources/ssh-config.local_bak
+
+# 发布前补充：IDE 备份、本地环境变量与临时文件
+*.bak
+*.bak-*
+*.imm
+.env
+.env.*
+!**/.env.example
+application-local.yml
+
+# 本地调试备份
+*.diagbak
+*.workbefore
+*.bak

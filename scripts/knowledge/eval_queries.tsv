@@ -1,0 +1,20 @@
+prod-db-01 上 df -h 显示 /var 分区 100%	KB-001	exact
+nginx 报 502 Bad Gateway	KB-010	exact
+java.lang.OutOfMemoryError: Java heap space	KB-027	exact
+Permission denied (publickey) 登录 10.0.3.21	KB-018	exact
+MySQL 报 Too many connections	KB-023	exact
+磁盘写不进去了	KB-001	synonym
+内存吃光了，进程自己没了	KB-003	synonym
+句柄数不够用了	KB-019	synonym
+证书失效了	KB-029	synonym
+缓存库内存撑爆了	KB-026	synonym
+机器卡得要死	KB-005	colloquial
+服务怎么点都起不来	KB-009	colloquial
+网站一直转圈最后超时	KB-011	colloquial
+远程连服务器要等半天	KB-017	colloquial
+定时任务跟没跑一样	KB-021	colloquial
+nginx 502 而且磁盘快满了	KB-010	cross
+服务起不来而且 8080 端口被占用	KB-008	cross
+磁盘 IO 高 load 也高但 CPU 不忙	KB-006	cross
+容器一直重启退出码是 137	KB-028	cross
+MySQL 主从延迟导致读到的数据是旧的	KB-025	cross

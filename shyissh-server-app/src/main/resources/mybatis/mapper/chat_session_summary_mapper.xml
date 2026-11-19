@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.shiyi.infrastructure.dao.IChatSessionSummaryDao">
+
+    <resultMap id="ChatSessionSummaryMap" type="com.shiyi.infrastructure.dao.po.ChatSessionSummaryPO">
+        <id column="session_id" property="sessionId"/>
+        <result column="user_id" property="userId"/>
+        <result column="summary" property="summary"/>
+        <result column="covered_until_id" property="coveredUntilId"/>
+        <result column="increments" property="increments"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <sql id="columns">
+        session_id, user_id, summary, covered_until_id, increments, updated_at
+    </sql>
+
+    <select id="queryBySessionId" resultMap="ChatSessionSummaryMap">
+        SELECT <include refid="columns"/>
+        FROM chat_session_summary
+        WHERE session_id = #{sessionId}
+    </select>
+
+    <insert id="insert" parameterType="com.shiyi.infrastructure.dao.po.ChatSessionSummaryPO">
+        INSERT INTO chat_session_summary (session_id, user_id, summary, covered_until_id, increments)
+        VALUES (#{sessionId}, #{userId}, #{summary}, #{coveredUntilId}, #{increments})
+    </insert>
+
+    <!-- 游标条件更新：并发时后到的更新影响 0 行，调用方据此改用库里已有的结果 -->
+    <update id="updateIfCursor">
+        UPDATE chat_session_summary
+        SET user_id = #{po.userId},
+            summary = #{po.summary},
+            covered_until_id = #{po.coveredUntilId},
+            increments = #{po.increments}
+        WHERE session_id = #{po.sessionId}
+          AND covered_until_id = #{expected}
+    </update>
+
+    <select id="queryRecentByUser" resultMap="ChatSessionSummaryMap">
+        SELECT <include refid="columns"/>
+        FROM chat_session_summary
+        WHERE user_id = #{userId}
+          AND session_id &lt;&gt; #{excludeSessionId}
+        ORDER BY updated_at DESC
+        LIMIT #{limit}
+    </select>
+</mapper>

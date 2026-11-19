@@ -1,0 +1,45 @@
+package com.shiyi.domain.agent.model.entity;
+
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.util.Date;
+
+/**
+ * 会话元数据实体（领域层）
+ * <p>
+ * 对应数据库 {@code chat_session} 表，记录一次对话会话的元信息。
+ * 由会话创建流程在建立会话时同步落库。
+ * <p>
+ * {@code id} 即业务会话 ID（UUID），{@code messageCount} 在每次保存消息时 +1，
+ * 方便前端列表展示活跃度。
+ */
+@Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+public class ChatSessionEntity {
+
+    /** 会话 ID（业务会话唯一标识，UUID） */
+    private String id;
+
+    /** 智能体 ID */
+    private String agentId;
+
+    /** 用户 ID */
+    private String userId;
+
+    /** 会话标题（创建时默认"新会话"） */
+    private String title;
+
+    /** 消息数量（每次保存消息时 +1） */
+    private Integer messageCount;
+
+    /** 创建时间 */
+    private Date createdAt;
+
+    /** 更新时间 */
+    private Date updatedAt;
+}

@@ -1,0 +1,49 @@
+server:
+  port: 8091
+
+# 线程池配置
+thread:
+  pool:
+    executor:
+      config:
+        core-pool-size: 20
+        max-pool-size: 50
+        keep-alive-time: 5000
+        block-queue-size: 5000
+        policy: CallerRunsPolicy
+
+spring:
+  config:
+    # prod 也必须导入这一个 yml：ai.agent.config 就是模型装配、Agent 人格、MCP/skills 工具的全部来源，
+    # 不导入的话应用能启动，但图一跑就报"没有可用的 ChatModel bean"。
+    import:
+      - classpath:agent/ssh-agent.yml
+  datasource:
+    # 连接串与口令一律由环境变量注入，仓库里不放生产凭据。
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:}
+    url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/shiyissh?useSSL=false&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    type: com.zaxxer.hikari.HikariDataSource
+    # 注意：hikari 必须在 datasource 下面（spring.datasource.hikari.*）。
+    hikari:
+      pool-name: Retail_HikariCP
+      minimum-idle: 15
+      idle-timeout: 180000
+      maximum-pool-size: 25
+      auto-commit: true
+      max-lifetime: 1800000
+      connection-timeout: 30000
+      connection-test-query: SELECT 1
+
+# MyBatis 配置：三个 profile 都要有，否则 mapper 一个都不会被加载，
+# 表现为启动正常、第一次查库就报 Invalid bound statement。
+mybatis:
+  mapper-locations: classpath:/mybatis/mapper/*.xml
+  config-location: classpath:/mybatis/config/mybatis-config.xml
+
+# 日志
+logging:
+  level:
+    root: info
+  config: classpath:logback-spring.xml

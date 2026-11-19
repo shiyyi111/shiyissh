@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.shiyi.infrastructure.dao.ILongTermMemoryDao">
+
+    <resultMap id="LongTermMemoryMap" type="com.shiyi.infrastructure.dao.po.LongTermMemoryPO">
+        <id column="id" property="id"/>
+        <result column="user_id" property="userId"/>
+        <result column="scope" property="scope"/>
+        <result column="host_key" property="hostKey"/>
+        <result column="session_id" property="sessionId"/>
+        <result column="memory_type" property="memoryType"/>
+        <result column="memory_key" property="memoryKey"/>
+        <result column="content" property="content"/>
+        <result column="keywords" property="keywords"/>
+        <result column="source_role" property="sourceRole"/>
+        <result column="confidence" property="confidence"/>
+        <result column="importance" property="importance"/>
+        <result column="hit_count" property="hitCount"/>
+        <result column="last_used_at" property="lastUsedAt"/>
+        <result column="expires_at" property="expiresAt"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+        <result column="embedding_status" property="embeddingStatus"/>
+        <result column="embedding_attempts" property="embeddingAttempts"/>
+        <result column="embedding_updated_at" property="embeddingUpdatedAt"/>
+    </resultMap>
+
+    <sql id="columns">
+        id, user_id, `scope`, host_key, session_id, memory_type, memory_key, content, keywords,
+        source_role, confidence, importance, hit_count, last_used_at, expires_at, created_at, updated_at,
+        embedding_status, embedding_attempts, embedding_updated_at
+    </sql>
+
+    <!-- 未过期的条件：expires_at 为空表示永久有效 -->
+    <sql id="notExpired">
+        (expires_at IS NULL OR expires_at &gt; CURRENT_TIMESTAMP)
+    </sql>
+
+    <select id="queryByIdentity" resultMap="LongTermMemoryMap">
+        SELECT <include refid="columns"/>
+        FROM long_term_memory
+        WHERE user_id = #{userId}
+          AND `scope` = #{scope}
+          AND host_key = #{hostKey}
+          AND memory_type = #{memoryType}
+          AND memory_key = #{memoryKey}
+        LIMIT 1
+    </select>
+
+    <insert id="insert" parameterType="com.shiyi.infrastructure.dao.po.LongTermMemoryPO" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO long_term_memory (
+            user_id, `scope`, host_key, session_id, memory_type, memory_key, content, keywords,
+            source_role, confidence, importance, hit_count, last_used_at, expires_at
+        ) VALUES (
+            #{userId}, #{scope}, #{hostKey}, #{sessionId}, #{memoryType}, #{memoryKey}, #{content}, #{keywords},
+            #{sourceRole}, #{confidence}, #{importance}, #{hitCount}, #{lastUsedAt}, #{expiresAt}
+        )
+    </insert>
+
+    <update id="update" parameterType="com.shiyi.infrastructure.dao.po.LongTermMemoryPO">
+        UPDATE long_term_memory
+        SET embedding_status = CASE WHEN content = #{content} THEN embedding_status ELSE 0 END,
+            embedding_attempts = CASE WHEN content = #{content} THEN embedding_attempts ELSE 0 END,
+            session_id = #{sessionId},
+            content = #{content},
+            keywords = #{keywords},
+            source_role = #{sourceRole},
+            confidence = #{confidence},
+            importance = #{importance},
+            expires_at = #{expiresAt},
+            hit_count = #{hitCount},
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+    </update>
+
+    <!-- 召回候选池：归属（USER 或本机 HOST）+ 未过期，一次粗筛 -->
+    <select id="queryCandidates" resultMap="LongTermMemoryMap">
+        SELECT <include refid="columns"/>
+        FROM long_term_memory
+        WHERE user_id = #{userId}
+          AND (`scope` = 'USER' OR (`scope` = 'HOST' AND host_key = #{hostKey}))
+          AND <include refid="notExpired"/>
+        ORDER BY importance DESC, updated_at DESC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 语义召回：按主键批量取回真值（Qdrant 只给候选 id，实际内容与打分字段仍以 MySQL 为准） -->
+    <select id="queryByIds" resultMap="LongTermMemoryMap">
+        SELECT <include refid="columns"/>
+        FROM long_term_memory
+        WHERE id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+          AND <include refid="notExpired"/>
+    </select>
+
+    <!-- 索引任务：待索引(0) 与 可重试失败(2)；attempts 达 3 的坏数据永久跳过 -->
+    <select id="queryEmbeddingPending" resultMap="LongTermMemoryMap">
+        SELECT <include refid="columns"/>
+        FROM long_term_memory
+        WHERE embedding_status IN (0, 2)
+          AND embedding_attempts &lt; 3
+          AND <include refid="notExpired"/>
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+    <update id="markEmbedded">
+        UPDATE long_term_memory
+        SET embedding_status = 1,
+            embedding_updated_at = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+    </update>
+
+    <update id="markEmbeddingFailed">
+        UPDATE long_term_memory
+        SET embedding_status = 2,
+            embedding_attempts = embedding_attempts + 1
+        WHERE id = #{id}
+    </update>
+
+    <!-- 召回回写：被召回的条目累加 hit_count 并刷新 last_used_at -->
+    <update id="touchUsage">
+        UPDATE long_term_memory
+        SET hit_count = hit_count + 1,
+            last_used_at = CURRENT_TIMESTAMP
+        WHERE id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </update>
+</mapper>
+

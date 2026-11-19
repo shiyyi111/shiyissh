@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.shiyi.infrastructure.dao.IChatMessageDao">
+
+    <resultMap id="ChatMessageMap" type="com.shiyi.infrastructure.dao.po.ChatMessagePO">
+        <id column="id" property="id"/>
+        <result column="session_id" property="sessionId"/>
+        <result column="role" property="role"/>
+        <result column="content" property="content"/>
+        <result column="tool_name" property="toolName"/>
+        <result column="tool_call_id" property="toolCallId"/>
+        <result column="token_count" property="tokenCount"/>
+        <result column="created_at" property="createdAt"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.shiyi.infrastructure.dao.po.ChatMessagePO" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO chat_message (session_id, role, content, tool_name, tool_call_id, token_count)
+        VALUES (#{sessionId}, #{role}, #{content}, #{toolName}, #{toolCallId}, #{tokenCount})
+    </insert>
+
+    <!--
+        只取会参与上下文的三种角色：system（早期数据里可能有）以及其它自定义角色不占名额。
+        注意这里保留 tool：图加载历史时会把 tool 行折叠成"曾执行命令：xxx"的助手痕迹
+        （见 GraphSession#expandToolTraces），靠的就是 tool 行里落库的命令回显。
+        把 tool 一起过滤掉，模型就不知道哪些命令已经跑过，会重复执行。
+    -->
+    <select id="queryRecentBySessionId" resultMap="ChatMessageMap">
+        SELECT id, session_id, role, content, tool_name, tool_call_id, token_count, created_at
+        FROM chat_message
+        WHERE session_id = #{sessionId}
+          AND role IN ('user', 'assistant', 'tool')
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
+</mapper>

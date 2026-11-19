@@ -1,0 +1,50 @@
+server:
+  port: 8091
+
+# 线程池配置
+thread:
+  pool:
+    executor:
+      config:
+        core-pool-size: 20
+        max-pool-size: 50
+        keep-alive-time: 5000
+        block-queue-size: 5000
+        policy: CallerRunsPolicy
+
+# 数据库配置；启动时配置数据库资源信息
+spring:
+  config:
+    import:
+      # 只加载 SSH 智能体这一张表：表里的 ai-api / chat-model / agents / tool-mcp-list
+      # 就是图链路的全部装配来源（模型装配见 GraphChatModelConfig，Agent 定义见 GraphAgentRegistry）。
+      - classpath:agent/ssh-agent.yml
+  datasource:
+    username: root
+    password: ${DB_PASSWORD:}
+    url: jdbc:mysql://localhost:3306/shiyissh?useSSL=false&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    type: com.zaxxer.hikari.HikariDataSource
+    # 注意：hikari 必须在 datasource 下面（spring.datasource.hikari.*）。
+    # 之前写成与 datasource 同级，等价于 spring.hikari.*，Hikari 根本没读到，
+    # 连接池一直跑默认值（10 连接 / 30s 超时），并发一上来最先打满的就是它。
+    hikari:
+      pool-name: Retail_HikariCP
+      minimum-idle: 15 #最小空闲连接数量
+      idle-timeout: 180000 #空闲连接存活最大时间，默认600000（10分钟）
+      maximum-pool-size: 25 #连接池最大连接数，默认是10
+      auto-commit: true  #此属性控制从池返回的连接的默认自动提交行为,默认值：true
+      max-lifetime: 1800000 #此属性控制池中连接的最长生命周期，值0表示无限生命周期，默认1800000即30分钟
+      connection-timeout: 30000 #数据库连接超时时间,默认30秒，即30000
+      connection-test-query: SELECT 1
+
+# MyBatis 配置
+mybatis:
+  mapper-locations: classpath:/mybatis/mapper/*.xml
+  config-location: classpath:/mybatis/config/mybatis-config.xml
+
+# 日志
+logging:
+  level:
+    root: info
+  config: classpath:logback-spring.xml

@@ -1,0 +1,16 @@
+package com.shiyi.domain.agent.service.tool.skills;
+
+import com.shiyi.domain.agent.model.valobj.AiAgentConfigTableVO;
+import org.springframework.ai.tool.ToolCallback;
+
+/**
+ * 工具 skills 构建服务
+ *
+ * @author shiyi
+ * 2026/2/6 08:03
+ */
+public interface ToolSkillsCreateService {
+
+    ToolCallback[] buildToolCallback(AiAgentConfigTableVO.Module.ChatModel.ToolSkills toolSkills) throws Exception;
+
+}

@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.shiyi.infrastructure.dao.IAgentApprovalDao">
+
+    <resultMap id="BaseResultMap" type="com.shiyi.infrastructure.dao.po.AgentApprovalPO">
+        <id column="id" property="id"/>
+        <result column="session_id" property="sessionId"/>
+        <result column="user_id" property="userId"/>
+        <result column="thread_id" property="threadId"/>
+        <result column="terminal_session_id" property="terminalSessionId"/>
+        <result column="agent_name" property="agentName"/>
+        <result column="command" property="command"/>
+        <result column="reason" property="reason"/>
+        <result column="status" property="status"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="decided_at" property="decidedAt"/>
+        <result column="decided_by" property="decidedBy"/>
+    </resultMap>
+
+    <sql id="columns">
+        id, session_id, user_id, thread_id, terminal_session_id, agent_name, command, reason, status,
+        created_at, decided_at, decided_by
+    </sql>
+
+    <insert id="insert" parameterType="com.shiyi.infrastructure.dao.po.AgentApprovalPO">
+        INSERT INTO agent_approval
+            (id, session_id, user_id, thread_id, terminal_session_id, agent_name,
+             command, reason, status, created_at, decided_at, decided_by)
+        VALUES
+            (#{id}, #{sessionId}, #{userId}, #{threadId}, #{terminalSessionId}, #{agentName},
+             #{command}, #{reason}, #{status}, #{createdAt}, #{decidedAt}, #{decidedBy})
+    </insert>
+
+    <select id="queryById" resultMap="BaseResultMap">
+        SELECT <include refid="columns"/>
+        FROM agent_approval
+        WHERE id = #{id}
+    </select>
+
+    <update id="updateDecision">
+        UPDATE agent_approval
+        SET status = #{status},
+            decided_at = #{decidedAt},
+            decided_by = #{decidedBy}
+        WHERE id = #{id}
+          AND status = 'PENDING'
+    </update>
+
+    <select id="queryPendingBySession" resultMap="BaseResultMap">
+        SELECT <include refid="columns"/>
+        FROM agent_approval
+        WHERE session_id = #{sessionId}
+          AND status = 'PENDING'
+        ORDER BY created_at DESC
+    </select>
+
+</mapper>

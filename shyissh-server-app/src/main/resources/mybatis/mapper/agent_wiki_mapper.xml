@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.shiyi.infrastructure.dao.IWikiEntryDao">
+
+    <resultMap id="WikiEntryMap" type="com.shiyi.infrastructure.dao.po.WikiEntryPO">
+        <id column="id" property="id"/>
+        <result column="user_id" property="userId"/>
+        <result column="host_key" property="hostKey"/>
+        <result column="title" property="title"/>
+        <result column="content" property="content"/>
+        <result column="tags" property="tags"/>
+        <result column="source" property="source"/>
+        <result column="hit_count" property="hitCount"/>
+        <result column="score" property="score"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <sql id="columns">
+        id, user_id, host_key, title, content, tags, source, hit_count, created_at, updated_at
+    </sql>
+
+    <!--
+      检索：MATCH...AGAINST 用 NATURAL LANGUAGE MODE，中文由 ngram 解析器切 2 字滑窗。
+      归属过滤是"并集"：本用户条目 + 全局条目；本主机条目 + 通用条目。
+      排序先按相关性、再按命中次数：完全匹配的旧条目不该被高频但相关性低的条目顶下去。
+    -->
+    <select id="fulltextSearch" resultMap="WikiEntryMap">
+        SELECT
+        <include refid="columns"/>,
+        MATCH(title, content) AGAINST (#{keywords} IN NATURAL LANGUAGE MODE) AS score
+        FROM agent_wiki
+        WHERE MATCH(title, content) AGAINST (#{keywords} IN NATURAL LANGUAGE MODE)
+        AND (user_id = #{userId} OR user_id = '')
+        AND (host_key = #{hostKey} OR host_key = '')
+        ORDER BY score DESC, hit_count DESC, updated_at DESC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 回表：归属过滤与关键词检索同一口径（本用户/全局 × 本主机/通用） -->
+    <select id="queryByIds" resultMap="WikiEntryMap">
+        SELECT
+        <include refid="columns"/>
+        FROM agent_wiki
+        WHERE id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+        AND (user_id = #{userId} OR user_id = '')
+        AND (host_key = #{hostKey} OR host_key = '')
+    </select>
+
+    <!-- 全量索引回填：按主键游标翻页，避免 OFFSET 深分页与并发写入导致的漏行 -->
+    <select id="listForIndex" resultMap="WikiEntryMap">
+        SELECT
+        <include refid="columns"/>
+        FROM agent_wiki
+        WHERE id > #{afterId}
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="queryByIdentity" resultMap="WikiEntryMap">
+        SELECT
+        <include refid="columns"/>
+        FROM agent_wiki
+        WHERE user_id = #{userId} AND host_key = #{hostKey} AND title = #{title}
+        LIMIT 1
+    </select>
+
+    <select id="listByIds" resultMap="WikiEntryMap">
+        SELECT * FROM agent_wiki WHERE id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO agent_wiki (user_id, host_key, title, content, tags, source, hit_count)
+        VALUES (#{userId}, #{hostKey}, #{title}, #{content}, #{tags}, #{source}, 0)
+    </insert>
+
+    <update id="update">
+        UPDATE agent_wiki
+        SET content = #{content},
+            tags    = #{tags},
+            source  = #{source}
+        WHERE id = #{id}
+    </update>
+
+    <update id="touchUsage">
+        UPDATE agent_wiki
+        SET hit_count = hit_count + 1
+        WHERE id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </update>
+
+</mapper>

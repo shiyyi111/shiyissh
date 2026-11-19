@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.shiyi.infrastructure.dao.ISynonymDao">
+
+    <resultMap id="SynonymMap" type="com.shiyi.infrastructure.dao.po.SynonymPO">
+        <id column="id" property="id"/>
+        <result column="alias" property="alias"/>
+        <result column="canonical" property="canonical"/>
+        <result column="lang" property="lang"/>
+        <result column="weight" property="weight"/>
+        <result column="enabled" property="enabled"/>
+        <result column="remark" property="remark"/>
+    </resultMap>
+
+    <select id="queryEnabled" resultMap="SynonymMap">
+        SELECT id, alias, canonical, lang, weight, enabled, remark
+        FROM ops_synonym
+        WHERE enabled = 1
+        ORDER BY weight DESC, id
+    </select>
+
+</mapper>

@@ -1,0 +1,131 @@
+spring:
+  config:
+    name: shyissh-server-app
+  profiles:
+    active: dev
+
+# 图链路（SAA StateGraph）的可调参数。
+# 默认值写在 @Value 注解里，这里显式列出来，是为了"线上要调哪个数"不用翻代码。
+app:
+  agent:
+    # 单轮请求最多跑几轮 ReAct：到第 N 轮会摘掉全部工具，强制模型用已有信息收口。
+    # 调大能多查几轮，但耗时与 token 线性上涨，也更容易陷入"换条命令再试一次"。
+    max-rounds: 3
+    # 单轮请求最多真正执行多少条工具命令（被 CONFIRM/BLOCK 拒绝的不计入）。
+    # 它和 max-rounds 是两个维度：一轮里模型可以并发发出多个 toolCall。
+    max-tool-calls: 20
+    # 单轮请求的 token 总预算（prompt + completion，含派发出去的子智能体）。
+    # 超了之后不再给工具，stopReason = max_tokens。
+    max-total-tokens: 24000
+    # 子智能体派发（dispatchSubAgent / dispatchSubAgents）的超时与重试。
+    # 这两项在 ADK 时期就有，SAA 重写时丢了，2026-11-14 补回。
+    dispatch:
+      # 一次派发的整体上限：子 Agent 自己的多轮 ReAct + 工具执行都算在内。
+      # 没有它，子图卡在一条不返回的 SSH 命令上，父请求会一直挂着（父级的轮次/token 闸拦不住）。
+      timeout-ms: 120000
+      # 失败重试次数（不含首次）；默认 2，即最多跑 3 次。只重试超时与执行异常，不重试校验失败。
+      max-retries: 2
+      # 退避基数：第 n 次重试前等 retry-backoff-ms * 2^(n-1)。
+      retry-backoff-ms: 1000
+      # 退避上限，避免指数增长把父请求拖成分钟级等待。
+      max-backoff-ms: 30000
+    ssh:
+      # 单条 SSH 命令的等待上限。超时不会杀远端进程，只把已有输出交给模型并提示
+      # "命令可能仍在执行"——为了超时去杀远端进程，比等它跑完危险得多。
+      command-timeout-ms: 60000
+    # 断点续跑：图在 [approval] 前中断，把状态存进检查点，人工批准后从同一位置恢复。
+    # 存 MySQL 而不是内存，是因为审批常常跨进程（人可能隔一会儿才回来点确认）。
+    checkpoint:
+      enabled: true
+      # mysql：检查点落库，重启后可恢复（默认）；memory：单进程演示，重启即丢待审批执行。
+      store: mysql
+      # create_if_not_exists（默认，首次启动自动建 GRAPH_THREAD / GRAPH_CHECKPOINT）；
+      # create_none：表由 DBA 预先建好，应用不碰 DDL；create_or_replace：启动重建（清空历史检查点）。
+      create: create_if_not_exists
+      # 每个线程最近检查点的内存缓存条数：调大减少查库，代价是占用更多堆内存。
+      max-cached-threads: 16
+  security:
+    # /api/** 的口令。留空表示不鉴权（只适合本机开发）。
+    # 生产必须用环境变量 APP_API_KEY 注入，否则任何能访问端口的人都能操作 SSH 终端。
+    api-key: ${APP_API_KEY:}
+
+  # 知识检索（RAG）。全部有默认值，不配也能启动——
+  # 向量库是增强项不是启动依赖，连不上就按 fail-open 退回纯关键词检索。
+  rag:
+    enabled: true
+    vector:
+      enabled: true
+      # 向量库故障（连不上/超时）时，是否降级为纯关键词继续回答。
+      fail-open: true
+      # 存储实现只有 qdrant 一种。早期还有一个 mysql-blob（向量存 BLOB + JVM 内余弦），
+      # 已在 2026-11-15 随"检索层重构 P1"删除——混合检索要 named vectors + sparse + 服务端融合，
+      # 那套 BLOB 方案一个都做不到，留着只会让人以为还有第二个选择。
+      store: qdrant
+      # 实际集合名 = 前缀 + "_" + 维度，换 embedding 模型时天然隔离。
+      collection-prefix: shiyissh
+      # Qdrant 跑在虚拟机里，这里填虚拟机 IP，不能用 localhost。
+      # 换机器时用环境变量覆盖即可：QDRANT_HOST=10.0.0.5。
+      host: ${QDRANT_HOST:localhost}
+      port: 6333
+      grpc-port: 6334
+      api-key: ${QDRANT_API_KEY:}
+      timeout-ms: 3000
+    embedding:
+      enabled: true
+      model: text-embedding-v4
+      # 换模型必须同时改维度，否则新旧向量不能比较。
+      dimensions: 1024
+      # DashScope 该模型单次最多 10 条，超过直接 400 InvalidParameter。
+      batch-size: 10
+      timeout-ms: 3000
+      # base-url 留空则复用 ai.agent.config 里 chat 模型的地址；api-key 走环境变量，不写进仓库。
+      base-url:
+      api-key: ${DASHSCOPE_API_KEY:}
+      max-chars: 2000
+    retrieval:
+      keyword-top-k: 20
+      vector-top-k: 20
+      final-top-k: 5
+      # RRF 平滑常数，60 是原论文经验值。
+      rrf-k: 60
+      min-score: 0.0
+      snippet-chars: 300
+    # 重排：对召回候选用交叉编码器逐对打分。默认开，但有界——
+    # 最多送 max-docs 条、超时即回退原顺序，失败不会影响可用性。
+    rerank:
+      enabled: true
+      model: qwen3.7-text-rerank
+      timeout-ms: 800
+      top-n: 5
+      max-docs: 20
+      max-chars: 500
+      # 留空则依次复用 embedding / chat 的 key 与默认 DashScope 原生端点。
+      base-url:
+      api-key:
+    # 向量索引统一走单消费者阻塞队列（VectorIndexWorker）：写入落库后入队，
+    # 专用线程 take() 后成批 embedding 再 upsert；不再有定时扫描。
+    # 失败按 1s/2s/4s 退避重试，3 次仍失败则放弃并告警；进程启动时排空上次遗留的积压。
+    vector-index:
+      startup-wait-ms: 3000
+      retry-base-ms: 1000
+    # 长期记忆是否进向量索引（关掉则记忆只用 MySQL 关键词候选池）。
+    memory-index:
+      enabled: true
+      batch-size: 50
+    # 静态知识（md）同步：启动后异步把 docs/knowledge-base/*.md 切段向量化进 Qdrant，
+    # 幂等（按 content_hash 覆盖写、差集删陈旧点），运行期不再定时扫描文件。
+    knowledge:
+      dir: docs/knowledge-base
+      sync-on-startup: true
+    # LLM 改写默认关闭：先跑规则归一化 + 混合召回，评测显示 badcase 占比高再打开。
+    rewrite:
+      enabled: false
+      model:
+      timeout-ms: 3000
+      max-tokens: 100
+      trigger-min-hits: 2
+      cache-minutes: 1440
+    normalize:
+      synonym-enabled: true
+      synonym-cache-minutes: 30
+      max-terms: 8
