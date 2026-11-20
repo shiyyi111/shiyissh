@@ -35,7 +35,8 @@ import static org.junit.Assert.assertTrue;
  */
 public class HybridQueryIntegrationTest {
 
-    private static final String HOST = System.getenv().getOrDefault("QDRANT_HOST", "192.168.100.128");
+    /** 默认本机；Qdrant 在虚拟机里时用 {@code QDRANT_HOST=192.0.2.10} 之类的内网地址覆盖。 */
+    private static final String HOST = System.getenv().getOrDefault("QDRANT_HOST", "localhost");
     private static final String COLLECTION_PREFIX = "scratch_it_";
 
     private static QdrantVectorStore store;

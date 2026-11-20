@@ -29,6 +29,8 @@ public class RagProperties {
 
     private Retrieval retrieval = new Retrieval();
 
+    private Keyword keyword = new Keyword();
+
     private Rewrite rewrite = new Rewrite();
 
     private Rerank rerank = new Rerank();
@@ -59,7 +61,7 @@ public class RagProperties {
 
         /**
          * Qdrant 地址。
-         * 注意：Qdrant 部署在虚拟机里时这里要填虚拟机的 IP（如 192.168.1.20），
+         * 注意：Qdrant 部署在虚拟机里时这里要填虚拟机的 IP（如 192.0.2.10），
          * 不能用 localhost——localhost 在 Windows 上指本机，指不到虚拟机。
          */
         private String host = "localhost";
@@ -106,6 +108,35 @@ public class RagProperties {
 
         /** 单条文本最大字符数；超出部分截断（向量化只取语义主干，不需要全文）。 */
         private int maxChars = 2000;
+    }
+
+    /**
+     * 关键词检索路配置。
+     * <p>
+     * 默认走 {@code bm25}：进程内 Lucene + 中文分词 + BM25 相似度。
+     * 旧的 {@code sparse}（Qdrant 稀疏向量 + 2-gram）保留为回滚开关——两条路的差异只在
+     * "关键词腿怎么算分"，其余（稠密路、融合、重排）完全共用。
+     */
+    @Data
+    public static class Keyword {
+
+        /** 关键词路开关；关掉后只剩稠密向量一路召回。 */
+        private boolean enabled = true;
+
+        /** 实现：{@code bm25} = Lucene；{@code sparse} = Qdrant 稀疏向量（回滚用）。 */
+        private String backend = "bm25";
+
+        /** BM25 词频饱和系数 k1；常见取值 1.2。 */
+        private float k1 = 1.2f;
+
+        /** BM25 文档长度归一系数 b（0~1）；常见取值 0.75。 */
+        private float b = 0.75f;
+
+        /** 关键词路召回条数；<=0 时回落到 {@code retrieval.keywordTopK}。 */
+        private int topK = 20;
+
+        /** 双路 RRF 融合的平滑常数；<=0 时回落到 {@code retrieval.rrfK}。 */
+        private int rrfK = 60;
     }
 
     /** 检索与融合参数。 */

@@ -8,6 +8,7 @@ import org.springframework.context.event.ContextRefreshedEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
@@ -39,6 +40,10 @@ public class KnowledgeSourceSync {
     @Resource
     private KnowledgeIndexer knowledgeIndexer;
 
+    /** 关键词腿索引（Lucene/BM25）：md 由索引器重建，wiki 在这里补扫。 */
+    @Resource
+    private Bm25KnowledgeIndex bm25Index;
+
     /**
      * 启动同步：异步执行，异常只记日志。
      */
@@ -65,13 +70,46 @@ public class KnowledgeSourceSync {
      * @return 同步统计
      */
     public KnowledgeIndexer.SyncStats sync() {
-        Path dir = Path.of(knowledgeDir);
+        Path dir = resolveKnowledgeDir();
         log.info("[knowledge] 开始同步 md 静态知识：{}", dir.toAbsolutePath());
-        return knowledgeIndexer.syncMarkdown(dir);
+        KnowledgeIndexer.SyncStats stats = knowledgeIndexer.syncMarkdown(dir);
+        // wiki 在 MySQL 里、不在 md 里：进程重启后内存倒排索引是空的，必须补扫一次，
+        // 否则"重启后 wiki 关键词搜不到"会变成只在重启后复现的怪问题
+        try {
+            bm25Index.rebuildWiki();
+        } catch (Exception e) {
+            log.warn("[knowledge] wiki 关键词索引补扫失败（md 关键词召回不受影响）：{}", e.getMessage());
+        }
+        return stats;
     }
 
     /** 供读取配置的测试用（包内可见，避免反射）。 */
     Path resolveDir() {
         return Path.of(knowledgeDir);
+    }
+
+    /**
+     * 解析 md 知识目录。
+     * <p>
+     * 默认配置是相对路径 {@code docs/knowledge-base}，相对的是<b>进程工作目录</b>：
+     * 从仓库根启动能命中，从模块目录启动（{@code cd shyissh-server-app && mvn spring-boot:run}）
+     * 会解析到 {@code shyissh-server-app/docs/knowledge-base}，那里没有文件，结果就是"零条知识"
+     * 却只留一条 warn，看起来非常像 RAG 坏了。这里在直接路径不存在时向上找两级，
+     * 命中就用，并把实际路径写进日志。
+     */
+    private Path resolveKnowledgeDir() {
+        Path configured = Path.of(knowledgeDir);
+        if (Files.isDirectory(configured)) {
+            return configured;
+        }
+        Path probe = configured;
+        for (int i = 0; i < 3 && probe.getParent() != null; i++) {
+            probe = Path.of("..").resolve(probe).normalize();
+            if (Files.isDirectory(probe)) {
+                log.info("[knowledge] 配置目录 {} 不存在，改用 {}（按工作目录向上找）", configured, probe);
+                return probe;
+            }
+        }
+        return configured;
     }
 }

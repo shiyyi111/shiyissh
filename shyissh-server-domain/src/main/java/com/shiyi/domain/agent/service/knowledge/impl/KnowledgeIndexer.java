@@ -65,6 +65,13 @@ public class KnowledgeIndexer {
     private ObjectProvider<VectorStore> vectorStoreProvider;
 
     /**
+     * 关键词腿索引：与向量库并行维护，但与 embedding 完全解耦——
+     * embedding 欠费/超时的时候，关键词召回仍然要能用。
+     */
+    @Resource
+    private Bm25KnowledgeIndex bm25Index;
+
+    /**
      * 混合集合名：前缀 + {@code _knowledge_hybrid_} + 维度。
      * <p>
      * 带 {@code hybrid} 与维度两个段是刻意的：换 embedding 模型时天然隔离；
@@ -165,15 +172,21 @@ public class KnowledgeIndexer {
      * @return 成功写入向量库的条数
      */
     public int indexWikiByIds(List<Long> ids) {
-        if (ids == null || ids.isEmpty() || !ragProperties.getVector().isEnabled() || !embeddingClient.available()) {
-            return 0;
-        }
-        VectorStore vectorStore = vectorStoreProvider.getIfAvailable();
-        if (vectorStore == null) {
+        if (ids == null || ids.isEmpty()) {
             return 0;
         }
         List<WikiEntryEntity> rows = wikiRepository.findByIds(ids);
         if (rows == null || rows.isEmpty()) {
+            return 0;
+        }
+        // 关键词腿先写：它只依赖正文，不依赖 embedding，
+        // 这样 embedding 挂掉时关键词召回依然可用（与向量索引互不连坐）
+        bm25Index.upsertWiki(rows);
+        if (!ragProperties.getVector().isEnabled() || !embeddingClient.available()) {
+            return 0;
+        }
+        VectorStore vectorStore = vectorStoreProvider.getIfAvailable();
+        if (vectorStore == null) {
             return 0;
         }
         int dimensions = embeddingClient.dimensions();
@@ -289,6 +302,9 @@ public class KnowledgeIndexer {
             log.warn("[knowledge] md 目录 {} 下没有切出知识（检查 app.rag.knowledge.dir）", dir);
             return new SyncStats(0, 0, 0, System.currentTimeMillis() - startedAt);
         }
+        // 关键词腿先重建：md 是静态源、量小，全量重建比增量更不容易错；
+        // 且它不依赖 embedding，向量写入失败也不影响关键词召回
+        bm25Index.rebuildMd(sections);
         if (!denseAvailable) {
             log.warn("[knowledge] embedding 不可用，md 只写稀疏向量；召回会退化到关键词级别，恢复后请重跑同步");
         }

@@ -21,7 +21,7 @@
 2. 初始化：按需执行 `docs/dev-ops/mysql/sql/` 下的脚本；图检查点表（`GRAPH_THREAD` / `GRAPH_CHECKPOINT`）由 `MysqlSaver` 自动创建。**静态知识不再入库**——`docs/knowledge-base/*.md` 在启动后由 `KnowledgeSourceSync` 切段向量化写入 Qdrant（`app.rag.knowledge.sync-on-startup`，幂等）。
 3. 配置：数据源在 `application-dev.yml`；模型与三 Agent 在 `agent/ssh-agent.yml`。**API Key 走环境变量，不要提交明文**。
 4. 启动：`mvn -o -B -pl shyissh-server-app -am spring-boot:run`（默认端口 `8091`）。
-5. 测试：`mvn -o -B -pl shyissh-server-domain test`（当前 155 条，真模型 / 需库用例另作手工验证，见 `shyissh-server-app/src/test/java/com/shiyi/test/`）。
+5. 测试：`mvn -o -B -pl shyissh-server-domain test`（当前 165 条，真模型 / 需库用例另作手工验证，见 `shyissh-server-app/src/test/java/com/shiyi/test/`）。
 6. 检索评测：`shyissh-server-app/src/test/java/com/shiyi/test/knowledge/RetrievalBaselineProbeTest`（32 条固定查询，输出 recall@5 / MRR / hit@1 / p95）。
 
 ## 环境变量（不进仓库的密钥）

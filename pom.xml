@@ -36,6 +36,8 @@
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- Lucene 9.x 是最后支持 Java 17 的版本线（10.x 需要 Java 21） -->
+        <lucene.version>9.12.1</lucene.version>
     </properties>
 
 

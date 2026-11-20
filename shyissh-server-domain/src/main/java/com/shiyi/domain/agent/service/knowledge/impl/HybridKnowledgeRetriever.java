@@ -10,6 +10,7 @@ import com.shiyi.domain.agent.service.knowledge.KnowledgeRetriever;
 import com.shiyi.domain.agent.service.knowledge.LlmQueryRewriter;
 import com.shiyi.domain.agent.service.knowledge.QueryNormalizer;
 import com.shiyi.domain.agent.service.knowledge.RerankService;
+import com.shiyi.domain.agent.service.knowledge.RrfFusion;
 import jakarta.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -86,6 +87,13 @@ public class HybridKnowledgeRetriever implements KnowledgeRetriever {
     @Resource
     private LlmQueryRewriter llmQueryRewriter;
 
+    /**
+     * 关键词腿（Lucene/BM25）。
+     * 允许为 null：单测手工 new 且未装配时退回稀疏向量路；生产环境缺失也不至于让检索整体不可用。
+     */
+    @Resource
+    private Bm25KnowledgeIndex bm25Index;
+
     @Override
     public Result retrieve(String userId, String hostKey, String query, int limit) {
         if (!ragProperties.isEnabled()) {
@@ -150,6 +158,13 @@ public class HybridKnowledgeRetriever implements KnowledgeRetriever {
             // 代价是丢掉同义改写能力，换来的是 embedding 服务故障时知识检索仍然可用。
             float[] queryVector = embeddingClient.available() ? embeddingClient.embed(normalized.normalized()) : null;
             boolean denseAvailable = queryVector != null && queryVector.length > 0;
+            String collection = knowledgeIndexer.hybridCollectionName();
+            if (useBm25()) {
+                // 关键词腿换成 BM25 之后，融合不再依赖稀疏向量：
+                // 稠密路仍查 Qdrant，关键词路查本地 Lucene，融合在本地按名次做。
+                return gatherBm25(userId, hostKey, normalized, finalLimit, vectorStore, collection,
+                        queryVector, denseAvailable);
+            }
             SparseVector sparse = SparseEncoder.encodeQuery(normalized.normalized());
             if (!denseAvailable && (sparse == null || sparse.isEmpty())) {
                 return new RetrievalRound(List.of(), true);
@@ -158,7 +173,6 @@ public class HybridKnowledgeRetriever implements KnowledgeRetriever {
                 log.warn("[knowledge] 稠密查询向量不可用（embedding 已关闭或调用失败），本次仅走稀疏召回：\"{}\"",
                         normalized.normalized());
             }
-            String collection = knowledgeIndexer.hybridCollectionName();
             int topK = Math.max(finalLimit, ragProperties.getRetrieval().getVectorTopK());
             List<VectorStore.Hit> raw = vectorStore.queryHybrid(collection, queryVector, sparse, topK, Map.of());
             if (raw == null || raw.isEmpty()) {
@@ -190,6 +204,125 @@ public class HybridKnowledgeRetriever implements KnowledgeRetriever {
             }
             log.warn("[knowledge] 知识检索失败，降级返回空结果：{}", e.getMessage());
             return new RetrievalRound(List.of(), true);
+        }
+    }
+
+    /**
+     * 关键词腿是否走 BM25：配置开启 + backend=bm25 + 索引可用。
+     * 三点都满足才切；任一不满足就退回稀疏向量路，保证"换方案"不会变成"检索挂掉"。
+     */
+    private boolean useBm25() {
+        RagProperties.Keyword keyword = ragProperties.getKeyword();
+        return keyword != null && keyword.isEnabled()
+                && !"sparse".equalsIgnoreCase(keyword.getBackend())
+                && bm25Index != null && bm25Index.available();
+    }
+
+    /**
+     * BM25 关键词腿 + 稠密向量腿的 RRF 融合。
+     * <p>
+     * 与稀疏路的差别只在"关键词腿怎么取候选"：稀疏路把 2-gram 向量交给 Qdrant 在服务端融合，
+     * 这里改成"稠密查 Qdrant、关键词查本地 Lucene"，再在本地按名次融合。
+     * 融合用 RRF 而不是分数相加：BM25 分与余弦分不在同一量纲，跨量纲相加等于给分数大的那一路隐性加权。
+     */
+    private RetrievalRound gatherBm25(String userId, String hostKey, QueryNormalizer.Normalized normalized,
+                                      int finalLimit, VectorStore vectorStore, String collection,
+                                      float[] queryVector, boolean denseAvailable) {
+        RagProperties.Keyword keyword = ragProperties.getKeyword();
+        int configuredKeywordTopK = ragProperties.getRetrieval().getKeywordTopK();
+        int keywordTopK = keyword.getTopK() > 0 ? keyword.getTopK() : configuredKeywordTopK;
+        int denseTopK = Math.max(finalLimit, ragProperties.getRetrieval().getVectorTopK());
+
+        List<Hit> denseHits = new ArrayList<>();
+        if (denseAvailable) {
+            // 关键词腿已由 Lucene 负责，Qdrant 这次只走稠密单路（sparse 传 null，服务端不做融合）
+            List<VectorStore.Hit> raw = vectorStore.queryHybrid(collection, queryVector, null, denseTopK, Map.of());
+            if (raw != null && !raw.isEmpty()) {
+                double minScore = ragProperties.getRetrieval().getMinScore();
+                for (Candidate candidate : hydrate(userId, hostKey, raw)) {
+                    if (candidate.hit().score() >= minScore) {
+                        denseHits.add(candidate.hit());
+                    }
+                }
+            }
+        }
+        denseHits.sort(Comparator.comparingDouble(Hit::score).reversed());
+
+        List<Bm25KnowledgeIndex.Doc> docs = bm25Index.search(normalized.normalized(), keywordTopK);
+        List<Hit> keywordHits = toKeywordHits(userId, hostKey, docs);
+        if (denseHits.isEmpty() && keywordHits.isEmpty()) {
+            return new RetrievalRound(List.of(), !denseAvailable);
+        }
+
+        int rrfK = keyword.getRrfK() > 0 ? keyword.getRrfK() : ragProperties.getRetrieval().getRrfK();
+        List<RrfFusion.Scored<Hit>> fused = RrfFusion.fuse(List.of(denseHits, keywordHits), rrfK, Hit::docId);
+        // 先多留几条再过重排（同稀疏路）：重排只在"已经召回的候选"里挑，召回丢掉的就救不回来
+        int candidateLimit = Math.min(denseTopK + keywordTopK, Math.max(finalLimit * 4, finalLimit));
+        List<Hit> merged = new ArrayList<>(Math.min(candidateLimit, fused.size()));
+        for (RrfFusion.Scored<Hit> scored : fused) {
+            if (merged.size() >= candidateLimit) {
+                break;
+            }
+            Hit hit = scored.item();
+            merged.add(new Hit(hit.docId(), hit.title(), hit.snippet(), hit.commands(),
+                    hit.tags(), hit.kind(), hit.source(), scored.score()));
+        }
+        log.info("[knowledge] 一轮召回（bm25）：归一化=\"{}\" 稠密={} 关键词={} 融合={} 候选={}",
+                normalized.normalized(), denseHits.size(), keywordHits.size(), fused.size(), merged.size());
+        return new RetrievalRound(refine(normalized.normalized(), merged, normalized.terms(), finalLimit),
+                // 关键词腿是本地索引，稠密挂了它仍能独立召回 ⇒ 只有"两路都空"才算降级
+                !denseAvailable && keywordHits.isEmpty());
+    }
+
+    /**
+     * Lucene 命中转 Hit，并按 wiki 归属回表：md 的标题/摘要/命令/标签都在索引里，
+     * wiki 的正文仍以 MySQL 为准（归属过滤留在回表 SQL，越权判断只有一处）。
+     */
+    private List<Hit> toKeywordHits(String userId, String hostKey, List<Bm25KnowledgeIndex.Doc> docs) {
+        if (docs == null || docs.isEmpty()) {
+            return List.of();
+        }
+        List<Long> wikiIds = new ArrayList<>();
+        for (Bm25KnowledgeIndex.Doc doc : docs) {
+            Long id = wikiIdOf(doc.docId());
+            if (id != null) {
+                wikiIds.add(id);
+            }
+        }
+        Map<Long, WikiEntryEntity> wikiById = new LinkedHashMap<>();
+        if (!wikiIds.isEmpty()) {
+            for (WikiEntryEntity entity : safe(wikiRepository.queryByIds(cap(wikiIds), userId, hostKey))) {
+                wikiById.put(entity.getId(), entity);
+            }
+        }
+        List<Hit> hits = new ArrayList<>(docs.size());
+        for (Bm25KnowledgeIndex.Doc doc : docs) {
+            Long wikiId = wikiIdOf(doc.docId());
+            if (wikiId != null) {
+                WikiEntryEntity entity = wikiById.get(wikiId);
+                if (entity == null) {
+                    // 回表没找到（刚被删或归属已变）：宁可少一条，也不要越权返回
+                    continue;
+                }
+                Hit hit = toHit(entity);
+                hits.add(new Hit(hit.docId(), hit.title(), hit.snippet(), hit.commands(), hit.tags(),
+                        hit.kind(), "wiki", doc.score()));
+                continue;
+            }
+            hits.add(new Hit(doc.docId(), doc.title(), doc.snippet(), doc.commands(), doc.tags(),
+                    doc.kind(), doc.source(), doc.score()));
+        }
+        return hits;
+    }
+
+    private static Long wikiIdOf(String docId) {
+        if (docId == null || !docId.startsWith("wiki:")) {
+            return null;
+        }
+        try {
+            return Long.parseLong(docId.substring("wiki:".length()));
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 

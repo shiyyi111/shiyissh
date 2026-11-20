@@ -57,6 +57,22 @@
             <groupId>commons-codec</groupId>
             <artifactId>commons-codec</artifactId>
         </dependency>
+        <!-- 关键词检索路：进程内 Lucene + 中文分词 + BM25（替代 2-gram 稀疏向量的关键词腿） -->
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-core</artifactId>
+            <version>${lucene.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-analysis-common</artifactId>
+            <version>${lucene.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-analysis-smartcn</artifactId>
+            <version>${lucene.version}</version>
+        </dependency>
         <!-- 系统模块 -->
         <dependency>
             <groupId>com.shiyi</groupId>

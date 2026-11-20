@@ -179,7 +179,14 @@ public class QdrantVectorStore implements VectorStore {
         } catch (IllegalStateException e) {
             throw e;
         } catch (Exception e) {
-            throw new IllegalStateException("建混合集合失败：" + e.getMessage(), e);
+            // 网络类异常（如 ConnectException）的 message 常为 null，只拼 e.getMessage() 会得到
+            // "建混合集合失败：null"，既看不出是连不上也看不出连的是谁，这里补上异常类型与目标地址。
+            String detail = e.getMessage();
+            if (detail == null || detail.isBlank()) {
+                detail = e.getClass().getSimpleName();
+            }
+            throw new IllegalStateException(
+                    "建混合集合失败（" + baseUrl() + "/collections/" + collection + "）：" + detail, e);
         }
     }
 

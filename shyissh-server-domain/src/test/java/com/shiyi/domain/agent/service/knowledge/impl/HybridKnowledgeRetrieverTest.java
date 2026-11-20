@@ -32,6 +32,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -226,5 +227,49 @@ public class HybridKnowledgeRetrieverTest {
 
         assertEquals("重排炸了也必须保留召回结果", 2, result.hits().size());
         assertFalse(result.degraded());
+    }
+
+    /** 给检索器装上可用的 BM25 腿：单测不启动 Spring，用反射注入。 */
+    private Bm25KnowledgeIndex installBm25() {
+        Bm25KnowledgeIndex bm25Index = mock(Bm25KnowledgeIndex.class);
+        when(bm25Index.available()).thenReturn(true);
+        setField(retriever, "bm25Index", bm25Index);
+        return bm25Index;
+    }
+
+    @Test
+    public void bm25LegShouldFuseWithDenseRouteThroughRrf() {
+        setUp(true);
+        stubQueryHits(new VectorStore.Hit("point-1", 0.9d, mdPayload("KB-001", "磁盘空间不足")));
+        Bm25KnowledgeIndex bm25Index = installBm25();
+        when(bm25Index.search(anyString(), anyInt())).thenReturn(List.of(
+                new Bm25KnowledgeIndex.Doc("KB-002", "磁盘 inode 耗尽", "inode 满了也要 df -i",
+                        "df -i", "磁盘", "runbook", "md", 0d)));
+
+        KnowledgeRetriever.Result result = retriever.retrieve("default", "", "磁盘", 5);
+
+        assertEquals("稠密 + 关键词两路都命中的都要留下", 2, result.hits().size());
+        assertTrue("稠密路命中在", result.hits().stream().anyMatch(h -> "KB-001".equals(h.docId())));
+        assertTrue("BM25 路命中在", result.hits().stream().anyMatch(h -> "KB-002".equals(h.docId())));
+        assertFalse("两路都正常时不算降级", result.degraded());
+        // 关键词腿接管后稠密路只传 dense，不再往 Qdrant 传稀疏向量
+        verify(vectorStore).queryHybrid(anyString(), any(), isNull(), anyInt(), anyMap());
+    }
+
+    @Test
+    public void bm25ShouldStillAnswerWhenEmbeddingUnavailable() {
+        setUp(true);
+        when(embeddingClient.available()).thenReturn(false);
+        Bm25KnowledgeIndex bm25Index = installBm25();
+        when(bm25Index.search(anyString(), anyInt())).thenReturn(List.of(
+                new Bm25KnowledgeIndex.Doc("KB-002", "磁盘 inode 耗尽", "inode 满了也要 df -i",
+                        "df -i", "磁盘", "runbook", "md", 0d)));
+
+        KnowledgeRetriever.Result result = retriever.retrieve("default", "", "磁盘", 5);
+
+        assertEquals("embedding 挂掉时关键词腿必须兜住", "KB-002", result.hits().get(0).docId());
+        assertFalse("关键词腿可用时不算降级", result.degraded());
+        // 稠密不可用就不该查 Qdrant：少一次外呼，也避免拿到无意义的最近邻
+        verify(vectorStore, never()).queryHybrid(anyString(), any(), any(), anyInt(), anyMap());
     }
 }
